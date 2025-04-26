@@ -5,7 +5,103 @@ alwaysApply: false
 ---
 # Java Unit Testing Best Practices
 
-## Test Structure and Clarity
+This guide covers both the process of creating unit tests and the specific coding practices to follow when implementing them.
+
+## Part 1: Unit Test Implementation Process
+
+### Introduction
+
+Effective unit testing starts with a structured approach. This section outlines the recommended workflow for implementing unit tests, focusing on the process rather than specific coding details.
+
+### Process Overview
+
+Unit test implementation should follow these sequential phases:
+
+1. **Planning**: Define what to test and how to test it
+2. **Implementation**: Write the test following the plan
+3. **Validation**: Ensure the test works correctly by actually executing it
+4. **Refactoring**: Optimize the test code
+
+Skipping any of these phases, particularly validation, can lead to false confidence in test coverage and unmaintainable test code. Remember that an unexecuted test is not a complete test.
+
+### Planning Phase
+
+Begin with a clear test plan before writing any code:
+
+1. **Define test objectives**: What specific functionality or edge case are you testing?
+2. **Structure the test**: Outline setup-action-verification phases
+3. **Identify test data**: What inputs and expected outputs are needed?
+4. **Consider edge cases**: What boundary conditions should be tested?
+
+```java
+// Sample test plan structure
+/*
+ * Test: testSpecialCharactersInPassphrase
+ * Objective: Verify BIP47 works with special characters in passphrases
+ * 
+ * Setup: Create wallets with various special character passphrases
+ * Action: Generate payment codes, create notification transaction
+ * Verification: Assert addresses derived correctly match between sender/receiver
+ * 
+ * Test data: 
+ * - Basic special characters: "password!@#$%^&*()"
+ * - Unicode characters: "unicode¥€£¥€"
+ * - Emojis: "emojis😀👍"
+ */
+```
+
+### Implementation Phase
+
+Implement the test following the plan:
+
+1. **Follow test structure**: Maintain clear separation between setup, action, and verification phases with appropriate comments
+2. **Match existing patterns**: Follow conventions established in the existing test suite
+3. **Document thoroughly**: Write clear JavaDoc including:
+   - Purpose of the test
+   - What functionality is being verified
+   - Parameter descriptions
+   - References to test data providers (`@see` tags)
+
+### Validation Phase
+
+Verify the test works correctly:
+
+1. **Run the test in isolation**: Ensure it passes consistently
+2. **Run the full test suite**: Confirm it doesn't break other tests
+3. **Review failure messages**: Ensure failures produce clear diagnostic information
+
+This execution step is non-negotiable - every test must be run after it's written. When validating tests:
+
+1. Verify the test passes with correct implementations and fails with incorrect ones
+2. For unexpected failures, investigate in this order:
+  1. Test implementation (most common source of issues)
+  2. Code under test
+  3. Test environment or configuration
+3. For parameterized tests, confirm all combinations are correctly exercised
+4. Consider test coverage tools for complex code paths
+
+```bash
+# Run single test
+./gradlew test --tests "com.example.TestClass.testMethod"
+
+# Run full test suite
+./gradlew test
+```
+
+### Refactoring Phase
+
+Optimize the test code:
+
+1. **Extract common logic**: Move repeated operations to helper methods
+2. **Place helpers appropriately**: Test logic first, helper methods at the end of the file
+3. **Add navigation aids**: Use `@see` tags to reference providers and related tests
+4. **Review and simplify**: Eliminate redundancy and improve clarity
+
+## Part 2: Test Structure and Implementation Details
+
+This section covers specific coding techniques and practices for writing effective Java unit tests.
+
+### Test Structure and Clarity
 
 Tests should follow a clear setup-action-verification structure and remain focused on what's being tested.
 
@@ -23,7 +119,7 @@ void testFeature() {
 }
 ```
 
-## Exception Handling
+### Exception Handling
 
 Let exceptions propagate naturally in tests. Use JUnit's built-in mechanisms for expected exceptions.
 
@@ -40,7 +136,7 @@ void testExceptionHandling() {
 }
 ```
 
-## Helper Methods and Code Reuse
+### Helper Methods and Code Reuse
 
 Extract common logic into well-documented helper methods, but only when they significantly improve readability or reduce substantial duplication. Don't over-extract simple operations.
 
@@ -67,13 +163,13 @@ void testWalletCreation() {
 }
 ```
 
-### When to Extract Helper Methods
+#### When to Extract Helper Methods
 
 * Extract when logic is complex, repeated across multiple tests, or makes test intent unclear
 * Keep operations inline when they're simple, used only once, or when extraction would obscure test flow
 * Consider test readability first – a test should be understandable without jumping between methods
 
-## Input Validation and Documentation
+### Input Validation and Documentation
 
 Validate inputs early in helper methods and document expected exceptions clearly.
 
@@ -91,7 +187,7 @@ if (!VALID_SIZES.contains(size)) {
 }
 ```
 
-## Addressing Failing Tests
+### Addressing Failing Tests
 
 When a test fails, fix the implementation code to match the intended behavior, not vice versa. Never add special-casing to make tests pass.
 If the test expectations appear to actually be wrong, stop and ask for confirmation before changing the test expectations.
@@ -111,7 +207,7 @@ public int calculate(int input) {
 }
 ```
 
-## Magic Numbers and Constants
+### Magic Numbers and Constants
 
 Define constants for magic values and explain non-obvious values with comments.
 
@@ -123,7 +219,7 @@ byte[] hash = hexToBytes("7bac25892e87fa41dcbef00d93c7b1c0b20999e8");
 private static final byte[] TEST_TRANSACTION_HASH = hexToBytes("7bac25892e87fa41dcbef00d93c7b1c0b20999e8");
 ```
 
-## Parameterized Tests
+### Parameterized Tests
 
 Use parameterized tests for multiple similar test cases.
 
@@ -135,14 +231,27 @@ void testMultipleScenarios(String input, int expected) {
 }
 
 static Stream<Arguments> validInputProvider() {
-    return Stream.of(Arguments.of("input1", 10), Arguments.of("input2", 20));
+    return Stream.of(
+        Arguments.of("input1", 10), 
+        Arguments.of("input2", 20)
+    );
 }
 ```
 
 ## Common Pitfalls to Avoid
 
+* **Multiple concepts in one test**: Each test should verify a single aspect of functionality
+* **Unclear test names**: Test names should describe what's being tested and under what conditions
+* **Poor test structure**: Mixing setup, action, and verification phases makes tests hard to understand
 * **Excess Boilerplate**: Let JUnit handle exceptions; avoid needless try/catch
 * **Over-extraction**: Don't create helper methods for simple, one-time operations
 * **Magic Values**: Always name or document non-obvious constants
 * **Missing Validation**: Helper methods should validate inputs early
-* **Unclear Tests**: Tests should clearly show what's being verified
+* **Brittle Tests**: Writing tests that break with minor implementation changes
+* **Unexecuted Tests**: Always run tests after implementing them - unverified tests provide false confidence and hide bugs
+
+## Real-World Examples
+
+* @Example BIP47 tests in MorePaymentCodeTest.java show well-structured tests with clear separation of setup, action, and verification phases
+* @Example testSpecialCharactersInPassphrase demonstrates parameterized testing with clear data providers
+* @Example testLongPassphrase shows use of helper methods placed at the end of the class
