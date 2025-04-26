@@ -370,11 +370,56 @@ public class MorePaymentCodeTest {
      * the passphrase is processed during key derivation, potentially causing compatibility issues.
      *
      * @param scriptType The script type to use for the test (P2PKH or P2WPKH)
+     * @param specialPassphrase The passphrase containing special characters to test
      */
     @ParameterizedTest
-    @MethodSource("scriptTypeProvider")
-    void testSpecialCharactersInPassphrase(ScriptType scriptType) {
-        // Test implementation will be added later
+    @MethodSource("specialCharactersPassphraseProvider")
+    void testSpecialCharactersInPassphrase(ScriptType scriptType, String specialPassphrase) throws Exception {
+        // Setup
+        // Create sender wallet with special character passphrase
+        Wallet senderWallet = createWallet(specialPassphrase, scriptType, SENDER_12_WORDS);
+        Keystore senderKeystore = senderWallet.getKeystores().get(0);
+        
+        // Create receiver wallet with the same special character passphrase
+        Wallet receiverWallet = createWallet(specialPassphrase, scriptType, RECEIVER_12_WORDS);
+        Keystore receiverKeystore = receiverWallet.getKeystores().get(0);
+        
+        // Get payment codes from wallets
+        PaymentCode senderPaymentCode = senderWallet.getPaymentCode();
+        PaymentCode receiverPaymentCode = receiverWallet.getPaymentCode();
+        
+        // Verify payment codes are valid
+        Assertions.assertNotNull(senderPaymentCode, "Sender payment code should not be null");
+        Assertions.assertNotNull(receiverPaymentCode, "Receiver payment code should not be null");
+        
+        // Action
+        // Create notification transaction
+        Transaction notificationTx = createNotificationTransaction(
+                senderWallet, senderKeystore, senderPaymentCode, receiverPaymentCode, scriptType);
+        
+        // Receiver processes notification transaction
+        Wallet receiverNotificationWallet = receiverWallet.getNotificationWallet();
+        PaymentCode recoveredPaymentCode = PaymentCode.getPaymentCode(
+                notificationTx,
+                receiverNotificationWallet.getKeystores().get(0));
+        
+        // Create BIP47 payment child wallets
+        WalletPair childWallets = createChildWallets(
+                senderWallet, receiverWallet, recoveredPaymentCode, receiverPaymentCode, 
+                scriptType, "Sender with Special Characters", "Receiver with Special Characters");
+        
+        // Verification
+        // Verify the recovered payment code matches the sender's
+        Assertions.assertEquals(senderPaymentCode, recoveredPaymentCode, 
+                "Recovered payment code should match sender's payment code with special character passphrase");
+        
+        // Verify address derivation for multiple indices
+        WalletNode[] nodes = verifyAddressDerivation(
+                childWallets.senderChildWallet, childWallets.receiverChildWallet, 
+                3, "Addresses with special character passphrase");
+        
+        // Verify key access for receiver
+        verifyKeyAccess(receiverKeystore, nodes[1], 3, "Public key mismatch with special character passphrase");
     }
     
     /**
@@ -532,6 +577,27 @@ public class MorePaymentCodeTest {
             Arguments.of(PassphraseChangeType.REMOVE, ScriptType.P2PKH),
             Arguments.of(PassphraseChangeType.REMOVE, ScriptType.P2WPKH)
         );
+    }
+    
+    /**
+     * Provider for special character passphrases used in parameterized tests.
+     * Tests a variety of special characters including symbols, Unicode characters, and emojis
+     * with both P2PKH and P2WPKH script types.
+     * 
+     * @return A stream of arguments containing script type and special character passphrase
+     */
+    static Stream<Arguments> specialCharactersPassphraseProvider() {
+        List<ScriptType> scriptTypes = List.of(ScriptType.P2PKH, ScriptType.P2WPKH);
+        List<String> specialPassphrases = List.of(
+            "password!@#$%^&*()",     // Basic special characters
+            "unicode¥€£¥€",           // Unicode symbols directly in the string
+            "emojis😀👍"              // Emojis directly in the string
+        );
+        
+        return scriptTypes.stream()
+               .flatMap(scriptType -> 
+               specialPassphrases.stream().map(passphrase -> Arguments.of(scriptType, passphrase))
+               );
     }
     
     /**
