@@ -974,8 +974,7 @@ public class MorePaymentCodeTest {
      * The test uses a fixed script type (P2PKH) since the index-related behavior is independent of the
      * script type, and tests both the original and changed passphrase environments.
      *
-     * @param index The payment address index to test (0, 10, or 100)
-     * @see org.junit.jupiter.params.provider.ValueSource
+     * @param index The payment address index to test
      */
     @ParameterizedTest
     @ValueSource(ints = {0, 10, 100})
