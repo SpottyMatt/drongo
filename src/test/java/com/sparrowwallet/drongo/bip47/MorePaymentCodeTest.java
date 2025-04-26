@@ -570,7 +570,7 @@ public class MorePaymentCodeTest {
      * while still maintaining proper BIP47 functionality within the new passphrase environment.
      *
      * @param scriptType The script type to use for the test (P2PKH or P2WPKH)
-     * @throws Exception If there's an error during wallet creation or transaction processing
+     * @see #scriptTypeProvider()
      */
     @ParameterizedTest
     @MethodSource("scriptTypeProvider")
@@ -704,7 +704,7 @@ public class MorePaymentCodeTest {
      * for security and privacy in BIP47 payment channels.
      *
      * @param scriptType The script type to use for the test (P2PKH or P2WPKH)
-     * @throws Exception If there's an error during wallet creation or transaction processing
+     * @see #scriptTypeProvider()
      */
     @ParameterizedTest
     @MethodSource("scriptTypeProvider")
@@ -838,7 +838,7 @@ public class MorePaymentCodeTest {
      * all derived keys and addresses in BIP47 payment channels.
      *
      * @param scriptType The script type to use for the test (P2PKH or P2WPKH)
-     * @throws Exception If there's an error during wallet creation or transaction processing
+     * @see #scriptTypeProvider()
      */
     @ParameterizedTest
     @MethodSource("scriptTypeProvider")
@@ -970,9 +970,12 @@ public class MorePaymentCodeTest {
      * after a passphrase change. BIP47 allows for an unlimited number of payment addresses to be derived,
      * and this test ensures that address derivation remains consistent or is properly detected as
      * inconsistent at different indices when passphrases change.
+     * <p>
+     * The test uses a fixed script type (P2PKH) since the index-related behavior is independent of the
+     * script type, and tests both the original and changed passphrase environments.
      *
-     * @param index The payment address index to test
-     * @throws Exception If there's an error during wallet creation or transaction processing
+     * @param index The payment address index to test (0, 10, or 100)
+     * @see org.junit.jupiter.params.provider.ValueSource
      */
     @ParameterizedTest
     @ValueSource(ints = {0, 10, 100})
@@ -1244,14 +1247,20 @@ public class MorePaymentCodeTest {
      * Gets a wallet node at a specific derivation index.
      * <p>
      * This helper method derives a wallet node at a specific index by creating
-     * intermediate nodes as needed.
+     * intermediate nodes as needed. It handles both the case where index is 0
+     * (direct retrieval) and higher indices (sequential derivation).
      *
      * @param wallet The wallet to derive the node from
      * @param keyPurpose The key purpose (SEND or RECEIVE)
-     * @param targetIndex The index to derive to
+     * @param targetIndex The index to derive to (must be non-negative)
      * @return The wallet node at the specified index
+     * @throws IllegalArgumentException If targetIndex is negative
      */
     private WalletNode getNodeAtIndex(Wallet wallet, KeyPurpose keyPurpose, int targetIndex) {
+        if (targetIndex < 0) {
+            throw new IllegalArgumentException("Target index must be non-negative: " + targetIndex);
+        }
+        
         WalletNode node = null;
         
         // Start with fresh node
