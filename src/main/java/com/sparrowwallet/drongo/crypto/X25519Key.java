@@ -12,10 +12,12 @@ import java.security.*;
 import java.security.interfaces.XECPrivateKey;
 import java.security.interfaces.XECPublicKey;
 import java.security.spec.AlgorithmParameterSpec;
+import java.security.spec.NamedParameterSpec;
 import java.util.Optional;
 
 public class X25519Key {
     private final KeyPair keyPair;
+    // Parameter specification for X25519 curve
     private final AlgorithmParameterSpec ecSpec;
 
     public X25519Key() {
@@ -23,13 +25,9 @@ public class X25519Key {
     }
 
     public X25519Key(byte[] priv) {
-        try {
-            final KeyPairGenerator keyPairGenerator = KeyPairGenerator.getInstance("X25519");
-            this.ecSpec = keyPairGenerator.generateKeyPair().getPrivate().getParams();
-        } catch(NoSuchAlgorithmException e) {
-            throw new RuntimeException(e);
-        }
-
+        // Initialize ecSpec directly with NamedParameterSpec
+        this.ecSpec = new NamedParameterSpec("X25519");
+        
         X25519PrivateKeyParameters privateKeyParams = new X25519PrivateKeyParameters(priv, 0);
         X25519PublicKeyParameters publicKeyParams = privateKeyParams.generatePublicKey();
 
