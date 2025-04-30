@@ -1,46 +1,42 @@
 package com.sparrowwallet.drongo.bip47;
 
-import com.sparrowwallet.drongo.KeyPurpose;
-import com.sparrowwallet.drongo.Utils;
-import com.sparrowwallet.drongo.address.Address;
-import com.sparrowwallet.drongo.crypto.ChildNumber;
-import com.sparrowwallet.drongo.crypto.DeterministicKey;
-import com.sparrowwallet.drongo.crypto.ECKey;
-import com.sparrowwallet.drongo.policy.Policy;
-import com.sparrowwallet.drongo.policy.PolicyType;
-import com.sparrowwallet.drongo.protocol.*;
-import com.sparrowwallet.drongo.wallet.*;
+import java.util.List;
+import java.util.stream.Stream;
+
 import org.junit.jupiter.api.Assertions;
-import org.junit.jupiter.api.Disabled;
-import org.junit.jupiter.api.Test;
 import org.junit.jupiter.params.ParameterizedTest;
 import org.junit.jupiter.params.provider.Arguments;
 import org.junit.jupiter.params.provider.MethodSource;
 import org.junit.jupiter.params.provider.ValueSource;
 
-import java.security.InvalidKeyException;
-import java.security.NoSuchAlgorithmException;
-import java.security.NoSuchProviderException;
-import java.security.SecureRandom;
-import java.security.spec.InvalidKeySpecException;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.stream.Stream;
+import com.sparrowwallet.drongo.KeyPurpose;
+import com.sparrowwallet.drongo.Utils;
+import com.sparrowwallet.drongo.address.Address;
+import com.sparrowwallet.drongo.crypto.ECKey;
+import com.sparrowwallet.drongo.policy.Policy;
+import com.sparrowwallet.drongo.policy.PolicyType;
+import com.sparrowwallet.drongo.protocol.Script;
+import com.sparrowwallet.drongo.protocol.ScriptChunk;
+import com.sparrowwallet.drongo.protocol.ScriptOpCodes;
+import com.sparrowwallet.drongo.protocol.ScriptType;
+import com.sparrowwallet.drongo.protocol.Sha256Hash;
+import com.sparrowwallet.drongo.protocol.Transaction;
+import com.sparrowwallet.drongo.protocol.TransactionOutPoint;
+import com.sparrowwallet.drongo.protocol.TransactionOutput;
+import com.sparrowwallet.drongo.protocol.TransactionSignature;
+import com.sparrowwallet.drongo.protocol.TransactionWitness;
+import com.sparrowwallet.drongo.wallet.DeterministicSeed;
+import com.sparrowwallet.drongo.wallet.Keystore;
+import com.sparrowwallet.drongo.wallet.Wallet;
+import com.sparrowwallet.drongo.wallet.WalletNode;
 
 public class MorePaymentCodeTest {
-    
-    // Constants for entropy sizes as per BIP-39 specification
-    private static final int ENTROPY_SIZE_12_WORDS = 16; // 128 bits
-    private static final int ENTROPY_SIZE_24_WORDS = 32; // 256 bits
     
     // Standard amount used for test transaction outputs (in satoshis)
     private static final long STANDARD_OUTPUT_AMOUNT = 10000;
     
     // Dummy transaction hash used for test inputs
     private static final byte[] DUMMY_TX_HASH = Utils.hexToBytes("7bac25892e87fa41dcbef00d93c7b1c0b20999e85604d2ff8c87a3df4d6541cd");
-    
-    // Placeholder for witness signature in test transactions
-    private static final byte WITNESS_SIGNATURE_PLACEHOLDER = 0x01;
     
     // Fixed 12-word mnemonics for consistent test results
     private static final List<String> SENDER_12_WORDS = List.of(
@@ -365,6 +361,70 @@ public class MorePaymentCodeTest {
         
         // Verify key access for receiver
         verifyKeyAccess(receiverKeystore, nodes[1], 3, "Public key mismatch in no passphrase->passphrase scenario");
+    }
+
+    /**
+     * Tests BIP47 payment code functionality with extremely long passphrases.
+     * <p>
+     * This test ensures that very long passphrases (e.g., multiple sentences or paragraphs)
+     * don't cause issues with payment address derivation. Long passphrases might stress
+     * string handling, hashing functions, and memory usage in ways that could potentially
+     * cause address derivation problems.
+     *
+     * @param scriptType The script type to use for the test (P2PKH or P2WPKH)
+     * @see #scriptTypeProvider()
+     */
+    @ParameterizedTest
+    @MethodSource("scriptTypeProvider")
+    void testLongPassphrase(ScriptType scriptType) throws Exception {
+        // Setup
+        // Create long passphrase (multiple paragraphs)
+        String longPassphrase = generateLongPassphrase();
+
+        // Create sender wallet with long passphrase
+        Wallet senderWallet = createWallet(longPassphrase, scriptType, SENDER_12_WORDS);
+        Keystore senderKeystore = senderWallet.getKeystores().get(0);
+
+        // Create receiver wallet with same long passphrase
+        Wallet receiverWallet = createWallet(longPassphrase, scriptType, RECEIVER_12_WORDS);
+        Keystore receiverKeystore = receiverWallet.getKeystores().get(0);
+        
+        // Action
+        // Get payment codes from wallets
+        PaymentCode senderPaymentCode = senderWallet.getPaymentCode();
+        PaymentCode receiverPaymentCode = receiverWallet.getPaymentCode();
+
+        // Verify payment codes are valid
+        Assertions.assertNotNull(senderPaymentCode, "Sender payment code should not be null");
+        Assertions.assertNotNull(receiverPaymentCode, "Receiver payment code should not be null");
+
+        // Create notification transaction
+        Transaction notificationTx = createNotificationTransaction(
+                senderWallet, senderKeystore, senderPaymentCode, receiverPaymentCode, scriptType);
+
+        // Receiver processes notification transaction
+        Wallet receiverNotificationWallet = receiverWallet.getNotificationWallet();
+        PaymentCode recoveredPaymentCode = PaymentCode.getPaymentCode(
+                notificationTx,
+                receiverNotificationWallet.getKeystores().get(0));
+        
+        // Verification
+        // Verify the recovered payment code matches the sender's
+        Assertions.assertEquals(senderPaymentCode, recoveredPaymentCode, 
+                "Recovered payment code should match sender's payment code with long passphrase");
+
+        // Create BIP47 payment child wallets
+        WalletPair childWallets = createChildWallets(
+                senderWallet, receiverWallet, recoveredPaymentCode, receiverPaymentCode, 
+                scriptType, "Sender with Long Passphrase", "Receiver with Long Passphrase");
+
+        // Verify address derivation for multiple indices
+        WalletNode[] nodes = verifyAddressDerivation(
+                childWallets.senderChildWallet, childWallets.receiverChildWallet, 
+                3, "Addresses with long passphrase");
+
+        // Verify key access for receiver
+        verifyKeyAccess(receiverKeystore, nodes[1], 3, "Public key mismatch with long passphrase");
     }
     
     /**
@@ -1106,8 +1166,75 @@ public class MorePaymentCodeTest {
      */
     @ParameterizedTest
     @MethodSource("scriptTypeProvider")
-    void testNotificationTransaction_DifferentPassphrases(ScriptType scriptType) {
-        // Test implementation will be added later
+    void testNotificationTransaction_DifferentPassphrases(ScriptType scriptType) throws Exception {
+        // Setup
+        // Create sender wallet with first passphrase
+        final String senderPassphrase = "sender specific passphrase";
+        Wallet senderWallet = createWallet(senderPassphrase, scriptType, SENDER_12_WORDS);
+        Keystore senderKeystore = senderWallet.getKeystores().get(0);
+        
+        // Create receiver wallet with different passphrase
+        final String receiverPassphrase = "completely different receiver passphrase";
+        Wallet receiverWallet = createWallet(receiverPassphrase, scriptType, RECEIVER_12_WORDS);
+        
+        // Get payment codes from wallets
+        PaymentCode senderPaymentCode = senderWallet.getPaymentCode();
+        PaymentCode receiverPaymentCode = receiverWallet.getPaymentCode();
+        
+        // Verify payment codes are valid and different (due to different passphrases)
+        Assertions.assertNotNull(senderPaymentCode, "Sender payment code should not be null");
+        Assertions.assertNotNull(receiverPaymentCode, "Receiver payment code should not be null");
+        Assertions.assertNotEquals(senderPaymentCode, receiverPaymentCode, 
+                "Payment codes should be different due to different passphrases");
+        
+        // Action
+        // Create notification transaction
+        Transaction notificationTx = createNotificationTransaction(
+                senderWallet, senderKeystore, senderPaymentCode, receiverPaymentCode, scriptType);
+        
+        // Receiver processes notification transaction
+        Wallet receiverNotificationWallet = receiverWallet.getNotificationWallet();
+        
+        // Verification
+        // Ensure we can recover the sender's payment code despite different passphrases
+        PaymentCode recoveredPaymentCode = PaymentCode.getPaymentCode(
+                notificationTx,
+                receiverNotificationWallet.getKeystores().get(0));
+        
+        // Verify the recovered payment code matches the sender's 
+        Assertions.assertEquals(senderPaymentCode, recoveredPaymentCode,
+                "Recovered payment code should match sender's payment code despite different passphrases");
+        
+        // Verify we can extract the proper notification data
+        Assertions.assertEquals(senderPaymentCode.getPayload().length, recoveredPaymentCode.getPayload().length,
+                "Recovered payment code payload length should match sender's");
+        
+        // Verify the notification transaction has the expected structure
+        Assertions.assertTrue(notificationTx.getOutputs().size() >= 2,
+                "Notification transaction should have at least 2 outputs");
+        
+        // Verify one of the outputs is to the receiver's notification address
+        boolean hasOutputToNotificationAddress = false;
+        for (TransactionOutput output : notificationTx.getOutputs()) {
+            if (output.getScript().getToAddress().equals(receiverPaymentCode.getNotificationAddress())) {
+                hasOutputToNotificationAddress = true;
+                break;
+            }
+        }
+        Assertions.assertTrue(hasOutputToNotificationAddress,
+                "Notification transaction should include output to receiver's notification address");
+        
+        // Verify one of the outputs contains the OP_RETURN with blinded payment code
+        boolean hasOpReturnOutput = false;
+        for (TransactionOutput output : notificationTx.getOutputs()) {
+            List<ScriptChunk> scriptChunks = output.getScript().getChunks();
+            if (scriptChunks.size() >= 1 && scriptChunks.get(0).equalsOpCode(ScriptOpCodes.OP_RETURN)) {
+                hasOpReturnOutput = true;
+                break;
+            }
+        }
+        Assertions.assertTrue(hasOpReturnOutput,
+                "Notification transaction should include OP_RETURN output with blinded payment code");
     }
     
     /**
@@ -1120,78 +1247,138 @@ public class MorePaymentCodeTest {
      * or the derived payment addresses to be different from what the sender expects.
      * <p>
      * This test verifies whether such a change is correctly handled or if it leads to "missing" payments.
-     *
-     * @param scriptType The script type to use for the test (P2PKH or P2WPKH)
-     * @see #scriptTypeProvider()
-     */
-    @ParameterizedTest
-    @MethodSource("scriptTypeProvider")
-    void testNotificationTransactionProcessingAfterPassphraseChange(ScriptType scriptType) {
-        // Test implementation will be added later
-    }
-    
-    /**
-     * Tests BIP47 payment code functionality with extremely long passphrases.
      * <p>
-     * This test ensures that very long passphrases (e.g., multiple sentences or paragraphs)
-     * don't cause issues with payment address derivation. Long passphrases might stress
-     * string handling, hashing functions, and memory usage in ways that could potentially
-     * cause address derivation problems.
+     * EXPECTED BEHAVIOR: This test reveals a potentially serious issue: while the notification transaction
+     * CAN be processed after a passphrase change, the recovered payment code will be DIFFERENT from the 
+     * original sender's payment code. This means that wallets with different passphrases will derive 
+     * completely different payment addresses, causing payments to be "lost" (sent to addresses that the 
+     * receiver cannot access).
+     * <p>
+     * This explains GitHub issue #1642 - a user who changes their passphrase would be able to process
+     * notification transactions but would derive incorrect payment addresses, resulting in "missing" funds.
      *
      * @param scriptType The script type to use for the test (P2PKH or P2WPKH)
      * @see #scriptTypeProvider()
      */
     @ParameterizedTest
     @MethodSource("scriptTypeProvider")
-    void testLongPassphrase(ScriptType scriptType) throws Exception {
+    void testNotificationTransactionProcessingAfterPassphraseChange(ScriptType scriptType) throws Exception {
         // Setup
-        // Create long passphrase (multiple paragraphs)
-        String longPassphrase = generateLongPassphrase();
-
-        // Create sender wallet with long passphrase
-        Wallet senderWallet = createWallet(longPassphrase, scriptType, SENDER_12_WORDS);
+        // Create original receiver wallet with initial passphrase
+        final String originalPassphrase = "original receiver passphrase";
+        Wallet originalReceiverWallet = createWallet(originalPassphrase, scriptType, RECEIVER_12_WORDS);
+        Keystore originalReceiverKeystore = originalReceiverWallet.getKeystores().get(0);
+        
+        // Create sender wallet
+        Wallet senderWallet = createWallet("sender passphrase", scriptType, SENDER_12_WORDS);
         Keystore senderKeystore = senderWallet.getKeystores().get(0);
-
-        // Create receiver wallet with same long passphrase
-        Wallet receiverWallet = createWallet(longPassphrase, scriptType, RECEIVER_12_WORDS);
-        Keystore receiverKeystore = receiverWallet.getKeystores().get(0);
+        
+        // Get payment codes
+        PaymentCode senderPaymentCode = senderWallet.getPaymentCode();
+        PaymentCode originalReceiverPaymentCode = originalReceiverWallet.getPaymentCode();
+        
+        // Verify initial payment codes are valid
+        Assertions.assertNotNull(senderPaymentCode, "Sender payment code should not be null");
+        Assertions.assertNotNull(originalReceiverPaymentCode, "Original receiver payment code should not be null");
+        
+        // Create a notification transaction addressed to the ORIGINAL receiver payment code
+        Transaction notificationTx = createNotificationTransaction(
+                senderWallet, 
+                senderKeystore, 
+                senderPaymentCode, 
+                originalReceiverPaymentCode, 
+                scriptType);
+        
+        // Verify notification transaction is properly formed
+        boolean containsOpReturn = false;
+        boolean containsOutputToNotificationAddress = false;
+        
+        for (TransactionOutput output : notificationTx.getOutputs()) {
+            List<ScriptChunk> chunks = output.getScript().getChunks();
+            if (chunks.size() >= 1 && chunks.get(0).equalsOpCode(ScriptOpCodes.OP_RETURN)) {
+                containsOpReturn = true;
+            }
+            
+            if (output.getScript().getToAddress() != null && 
+                output.getScript().getToAddress().equals(originalReceiverPaymentCode.getNotificationAddress())) {
+                containsOutputToNotificationAddress = true;
+            }
+        }
+        
+        Assertions.assertTrue(containsOpReturn, 
+                "Notification transaction should contain OP_RETURN output");
+        Assertions.assertTrue(containsOutputToNotificationAddress, 
+                "Notification transaction should contain output to original notification address");
         
         // Action
-        // Get payment codes from wallets
-        PaymentCode senderPaymentCode = senderWallet.getPaymentCode();
-        PaymentCode receiverPaymentCode = receiverWallet.getPaymentCode();
-
-        // Verify payment codes are valid
-        Assertions.assertNotNull(senderPaymentCode, "Sender payment code should not be null");
-        Assertions.assertNotNull(receiverPaymentCode, "Receiver payment code should not be null");
-
-        // Create notification transaction
-        Transaction notificationTx = createNotificationTransaction(
-                senderWallet, senderKeystore, senderPaymentCode, receiverPaymentCode, scriptType);
-
-        // Receiver processes notification transaction
-        Wallet receiverNotificationWallet = receiverWallet.getNotificationWallet();
-        PaymentCode recoveredPaymentCode = PaymentCode.getPaymentCode(
-                notificationTx,
-                receiverNotificationWallet.getKeystores().get(0));
+        // Simulate the receiver changing their passphrase after receiving the notification tx
+        final String newPassphrase = "completely different passphrase";
         
-        // Verification
-        // Verify the recovered payment code matches the sender's
-        Assertions.assertEquals(senderPaymentCode, recoveredPaymentCode, 
-                "Recovered payment code should match sender's payment code with long passphrase");
-
+        // Create a new wallet using the same seed words but different passphrase
+        Wallet changedReceiverWallet = createWallet(newPassphrase, scriptType, RECEIVER_12_WORDS);
+        PaymentCode changedReceiverPaymentCode = changedReceiverWallet.getPaymentCode();
+        
+        // Verify the payment code has changed due to passphrase change
+        Assertions.assertNotEquals(originalReceiverPaymentCode, changedReceiverPaymentCode,
+                "Receiver payment code should change after passphrase change");
+        
+        // Verify notification addresses differ
+        Assertions.assertNotEquals(
+                originalReceiverPaymentCode.getNotificationAddress(),
+                changedReceiverPaymentCode.getNotificationAddress(),
+                "Notification addresses should be different after passphrase change");
+        
+        // Verification - CRITICAL FINDING
+        // Try to process the notification transaction with the new wallet that has a different passphrase
+        Wallet changedNotificationWallet = changedReceiverWallet.getNotificationWallet();
+        
+        // The notification transaction can be processed, but will recover a DIFFERENT payment code
+        PaymentCode recoveredWithChanged = PaymentCode.getPaymentCode(
+                notificationTx, 
+                changedNotificationWallet.getKeystores().get(0));
+        
+        // Verify the recovered payment code is NOT the same as the sender's
+        Assertions.assertNotEquals(senderPaymentCode, recoveredWithChanged,
+                "Changed wallet recovers a DIFFERENT payment code than the sender's!");
+        
+        // Verify original wallet still recovers the correct payment code
+        PaymentCode recoveredWithOriginal = PaymentCode.getPaymentCode(
+                notificationTx, 
+                originalReceiverWallet.getNotificationWallet().getKeystores().get(0));
+        
+        Assertions.assertEquals(senderPaymentCode, recoveredWithOriginal,
+                "Original wallet should recover the correct payment code");
+        
+        // THE CRITICAL TEST: Different passphrases will derive completely incorrect payment addresses!
+        
         // Create BIP47 payment child wallets
-        WalletPair childWallets = createChildWallets(
-                senderWallet, receiverWallet, recoveredPaymentCode, receiverPaymentCode, 
-                scriptType, "Sender with Long Passphrase", "Receiver with Long Passphrase");
-
-        // Verify address derivation for multiple indices
-        WalletNode[] nodes = verifyAddressDerivation(
-                childWallets.senderChildWallet, childWallets.receiverChildWallet, 
-                3, "Addresses with long passphrase");
-
-        // Verify key access for receiver
-        verifyKeyAccess(receiverKeystore, nodes[1], 3, "Public key mismatch with long passphrase");
+        WalletPair originalChildWallets = createChildWallets(
+                senderWallet, 
+                originalReceiverWallet, 
+                recoveredWithOriginal, 
+                originalReceiverPaymentCode, 
+                scriptType, 
+                "Original Sender", 
+                "Original Receiver");
+                
+        WalletPair changedChildWallets = createChildWallets(
+                senderWallet, 
+                changedReceiverWallet, 
+                recoveredWithChanged, 
+                changedReceiverPaymentCode, 
+                scriptType, 
+                "Changed Sender", 
+                "Changed Receiver");
+                
+        // Verify addresses derived from original and changed wallets are different
+        WalletNode originalSendNode = originalChildWallets.senderChildWallet.getFreshNode(KeyPurpose.SEND);
+        WalletNode changedSendNode = changedChildWallets.senderChildWallet.getFreshNode(KeyPurpose.SEND);
+        
+        Address originalAddress = originalSendNode.getAddress();
+        Address changedAddress = changedSendNode.getAddress();
+        
+        Assertions.assertNotEquals(originalAddress, changedAddress,
+                "Addresses derived after passphrase change are completely different - PAYMENTS WOULD BE LOST!");
     }
     
     /**
@@ -1231,9 +1418,9 @@ public class MorePaymentCodeTest {
     static Stream<Arguments> specialCharactersPassphraseProvider() {
         List<ScriptType> scriptTypes = List.of(ScriptType.P2PKH, ScriptType.P2WPKH);
         List<String> specialPassphrases = List.of(
-            "password!@#$%^&*()",     // Basic special characters
-            "unicode¥€£¥€",           // Unicode symbols directly in the string
-            "emojis😀👍"              // Emojis directly in the string
+            "password!@#$%^&*()'.,;/\"|{}[]+-_",     // Basic special characters
+            "unicode¥€£¥€",                          // Unicode symbols directly in the string
+            "emojis😀👍"                            // Emojis directly in the string
         );
         
         return scriptTypes.stream()
@@ -1277,47 +1464,6 @@ public class MorePaymentCodeTest {
         }
         
         return node;
-    }
-    
-    /**
-     * Creates a new wallet with the specified passphrase and script type.
-     * 
-     * @param passphrase The BIP39 passphrase to use for the wallet (empty string for no passphrase)
-     * @param scriptType The script type for the wallet (P2PKH or P2WPKH)
-     * @param entropySizeBytes The size of entropy in bytes (16 for 12 words, 32 for 24 words)
-     * @return A newly created wallet with random entropy and the specified passphrase
-     * @throws IllegalArgumentException If entropySizeBytes is not valid (must be 16, 20, 24, 28, or 32 bytes)
-     * @throws Exception If there's another error during wallet creation
-     */
-    private Wallet createWallet(String passphrase, ScriptType scriptType, int entropySizeBytes) throws Exception {
-        // BIP-39 requires entropy to be between 128-256 bits (16-32 bytes) and a multiple of 32 bits (4 bytes)
-        if (entropySizeBytes < 16 || entropySizeBytes > 32 || entropySizeBytes % 4 != 0) {
-            throw new IllegalArgumentException("Invalid entropy size: " + entropySizeBytes + 
-                    ". Must be 16, 20, 24, 28, or 32 bytes (for 12, 15, 18, 21, or 24 words).");
-        }
-        
-        // Choose appropriate mnemonic based on entropy size
-        List<String> words = null;
-        if (entropySizeBytes == ENTROPY_SIZE_12_WORDS) {
-            words = passphrase.isEmpty() ? SENDER_12_WORDS : RECEIVER_12_WORDS;
-        } else if (entropySizeBytes == ENTROPY_SIZE_24_WORDS) {
-            words = passphrase.isEmpty() ? SENDER_24_WORDS : RECEIVER_24_WORDS;
-        } else {
-            // For non-standard sizes, fallback to random generation
-            byte[] entropy = new byte[entropySizeBytes];
-            new SecureRandom().nextBytes(entropy);
-            words = new Bip39MnemonicCode().toMnemonic(entropy);
-        }
-        
-        DeterministicSeed seed = new DeterministicSeed(words, passphrase, 0, DeterministicSeed.Type.BIP39);
-        
-        Wallet wallet = new Wallet();
-        wallet.setPolicyType(PolicyType.SINGLE);
-        wallet.setScriptType(scriptType);
-        Keystore keystore = Keystore.fromSeed(seed, wallet.getScriptType().getDefaultDerivation());
-        wallet.getKeystores().add(keystore);
-        wallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, scriptType, wallet.getKeystores(), 1));
-        return wallet;
     }
     
     /**
