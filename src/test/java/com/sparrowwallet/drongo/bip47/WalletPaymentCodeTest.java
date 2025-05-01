@@ -38,7 +38,6 @@ import com.sparrowwallet.drongo.crypto.KeyDeriver;
  * These tests explore scenarios beyond basic cryptographic functionality:
  * - Wallet persistence and restoration
  * - Metadata preservation across wallet operations
- * - Differences between PayNym and direct Payment Code handling
  * - Notification transaction processing after wallet reloads
  * - BIP47 functionality with wallet passwords (not BIP39 passphrases)
  */
@@ -302,96 +301,6 @@ public class WalletPaymentCodeTest {
         // Verify that the address derived after recreation matches the original
         Assertions.assertEquals(originalAddress, recreatedReceiveNode1.getAddress(),
                 "Address derived after recreation should match original address");
-    }
-    
-    /**
-     * Tests the difference between PayNym and direct Payment Code handling in transactions.
-     * <p>
-     * This test addresses the specific issue where payments to PayNyms were reported to work
-     * but payments to direct Payment Codes failed. It creates both a PayNym-based payment
-     * channel and a direct Payment Code channel between the same wallets and verifies that
-     * transactions work identically in both scenarios.
-     * <p>
-     * The test confirms:
-     * 1. PayNym and Payment Code derivation works correctly
-     * 2. Notification transactions are properly created and processed for both types
-     * 3. Payment addresses derived from both methods match 
-     * 4. Address lookups work correctly in both scenarios
-     */
-    @Test
-    void testPayNymVsDirectPaymentCode() throws Exception {
-        // Setup
-        // Create sender wallet
-        Wallet senderWallet = createWallet("", ScriptType.P2WPKH, SENDER_WORDS);
-        Keystore senderKeystore = senderWallet.getKeystores().get(0);
-        
-        // Create receiver wallet
-        Wallet receiverWallet = createWallet("", ScriptType.P2WPKH, RECEIVER_WORDS);
-        
-        // Get payment codes from wallets
-        PaymentCode senderPaymentCode = senderWallet.getPaymentCode();
-        PaymentCode receiverPaymentCode = receiverWallet.getPaymentCode();
-        
-        // Create notification transaction using direct payment code
-        Transaction directNotificationTx = createNotificationTransaction(
-                senderWallet, senderKeystore, senderPaymentCode, receiverPaymentCode);
-        
-        // Process notification transaction
-        Wallet receiverNotificationWallet = receiverWallet.getNotificationWallet();
-        PaymentCode recoveredDirectPaymentCode = PaymentCode.getPaymentCode(
-                directNotificationTx, receiverNotificationWallet.getKeystores().get(0));
-        
-        // Create child wallets for direct Payment Code payments
-        Wallet senderDirectChildWallet = senderWallet.addChildWallet(
-                receiverPaymentCode, ScriptType.P2WPKH, "Direct Payment Code");
-        Wallet receiverDirectChildWallet = receiverWallet.addChildWallet(
-                recoveredDirectPaymentCode, ScriptType.P2WPKH, "Direct Payment Code");
-        
-        // Generate addresses in the direct payment channel
-        WalletNode directSendNode1 = senderDirectChildWallet.getFreshNode(KeyPurpose.SEND);
-        WalletNode directSendNode2 = senderDirectChildWallet.getFreshNode(KeyPurpose.SEND, directSendNode1);
-        
-        WalletNode directReceiveNode1 = receiverDirectChildWallet.getFreshNode(KeyPurpose.RECEIVE);
-        WalletNode directReceiveNode2 = receiverDirectChildWallet.getFreshNode(KeyPurpose.RECEIVE, directReceiveNode1);
-        
-        // Verify direct payment code addresses match
-        Assertions.assertEquals(directSendNode1.getAddress(), directReceiveNode1.getAddress(),
-                "First addresses should match in direct payment channel");
-        Assertions.assertEquals(directSendNode2.getAddress(), directReceiveNode2.getAddress(),
-                "Second addresses should match in direct payment channel");
-        
-        // Now simulate PayNym setup
-        // In a real application, PayNyms would be derived differently or obtained from a service,
-        // but for this test we'll use the same payment codes to simulate the comparison
-        
-        // Create child wallets for PayNym-based payments
-        Wallet senderPaynymChildWallet = senderWallet.addChildWallet(
-                receiverPaymentCode, ScriptType.P2WPKH, "PayNym");
-        Wallet receiverPaynymChildWallet = receiverWallet.addChildWallet(
-                recoveredDirectPaymentCode, ScriptType.P2WPKH, "PayNym");
-        
-        // Generate addresses in the PayNym payment channel
-        WalletNode paynymSendNode1 = senderPaynymChildWallet.getFreshNode(KeyPurpose.SEND);
-        WalletNode paynymSendNode2 = senderPaynymChildWallet.getFreshNode(KeyPurpose.SEND, paynymSendNode1);
-        
-        WalletNode paynymReceiveNode1 = receiverPaynymChildWallet.getFreshNode(KeyPurpose.RECEIVE);
-        WalletNode paynymReceiveNode2 = receiverPaynymChildWallet.getFreshNode(KeyPurpose.RECEIVE, paynymReceiveNode1);
-        
-        // Verify PayNym addresses match
-        Assertions.assertEquals(paynymSendNode1.getAddress(), paynymReceiveNode1.getAddress(),
-                "First addresses should match in PayNym payment channel");
-        Assertions.assertEquals(paynymSendNode2.getAddress(), paynymReceiveNode2.getAddress(),
-                "Second addresses should match in PayNym payment channel");
-        
-        // Verify PayNym and direct payment code generate identical addresses
-        // This is because they use the same underlying payment code in this test
-        Assertions.assertEquals(directSendNode1.getAddress(), paynymSendNode1.getAddress(),
-                "PayNym and direct payment should generate identical addresses when using same payment code");
-        Assertions.assertEquals(directSendNode2.getAddress(), paynymSendNode2.getAddress(),
-                "PayNym and direct payment should generate identical addresses when using same payment code");
-        
-        // In a real-world implementation, the difference would be in how the payment codes are
-        // shared and discovered, not in the address derivation itself
     }
     
     /**

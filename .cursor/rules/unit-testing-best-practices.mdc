@@ -249,6 +249,7 @@ static Stream<Arguments> validInputProvider() {
 * **Missing Validation**: Helper methods should validate inputs early
 * **Brittle Tests**: Writing tests that break with minor implementation changes
 * **Unexecuted Tests**: Always run tests after implementing them - unverified tests provide false confidence and hide bugs
+* **Testing Non-existent Abstractions**: Writing tests for concepts or abstractions that don't actually exist in the codebase being tested.
 
 ## Real-World Examples
 
