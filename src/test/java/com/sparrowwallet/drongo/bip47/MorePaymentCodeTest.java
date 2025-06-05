@@ -1727,4 +1727,160 @@ public class MorePaymentCodeTest {
         
         return sb.toString();
     }
+
+    /**
+     * Computes the blinded payment code for a notification transaction.
+     * This is the value sent in the OP_RETURN output.
+     */
+    private byte[] computeBlindedPaymentCode(ECKey senderInputKey, PaymentCode senderPaymentCode, PaymentCode receiverPaymentCode, TransactionOutPoint inputOutpoint) throws Exception {
+        SecretPoint secretPoint = new SecretPoint(
+                senderInputKey.getPrivKeyBytes(), 
+                receiverPaymentCode.getNotificationKey().getPubKey());
+        byte[] blindingMask = PaymentCode.getMask(
+                secretPoint.ECDHSecretAsBytes(), 
+                inputOutpoint.bitcoinSerialize());
+        return PaymentCode.blind(
+                senderPaymentCode.getPayload(), 
+                blindingMask);
+    }
+
+    /**
+     * Provider for sender account indices (0, 1, 2, 3)
+     */
+    static Stream<Integer> senderAccountProvider() {
+        return Stream.of(0, 1, 2, 3);
+    }
+
+    /**
+     * Provider for sender and receiver account index pairs.
+     */
+    static Stream<Arguments> senderReceiverAccountProvider() {
+        return Stream.of(
+            Arguments.of(0, 0),
+            Arguments.of(1, 0),
+            Arguments.of(2, 0),
+            Arguments.of(3, 0),
+            Arguments.of(4, 0)
+        );
+    }
+
+    /**
+     * Tests BIP47 payment code functionality with a specific seed and passphrase sending to a wallet
+     * with custom seed and custom passphrase, parameterized by sender and receiver account indices (P2WPKH only).
+     *
+     * @param senderAccount The account index to use for the sender (0 or 3)
+     * @param receiverAccount The account index to use for the receiver (0 or 3)
+     * @see #senderReceiverAccountProvider()
+     */
+    @ParameterizedTest
+    @MethodSource("senderReceiverAccountProvider")
+    void testVerySpecificSituation(int senderAccount, int receiverAccount) throws Exception {
+        // Setup
+        ScriptType scriptType = ScriptType.P2WPKH;
+        // Load sender seed from environment variable
+        String seedEnvVar = System.getenv("BIP47_TEST_SENDER_SEED");
+        if (seedEnvVar == null || seedEnvVar.trim().isEmpty()) {
+            throw new IllegalStateException("Environment variable BIP47_TEST_SENDER_SEED must be set. Format: comma-separated seed words");
+        }
+        List<String> specificSenderSeed = List.of(seedEnvVar.trim().split(","));
+        if (specificSenderSeed.size() != 12 && specificSenderSeed.size() != 24) {
+            throw new IllegalArgumentException("BIP47_TEST_SENDER_SEED must be exactly 12 or 24 words (comma-separated). Got: " + specificSenderSeed.size());
+        }
+        
+        // Load passphrase from environment variable
+        String specificSenderPassphrase = System.getenv("BIP47_TEST_SENDER_PASSPHRASE");
+        if (specificSenderPassphrase == null) {
+            throw new IllegalStateException("Environment variable BIP47_TEST_SENDER_PASSPHRASE must be set");
+        }
+        
+        // Specific passphrase for sender wallet
+        String customReceiverPassphrase = "It was a dark and stormy night.";
+        
+        // Create sender wallet with specific seed and passphrase at parameterized account index
+        DeterministicSeed senderSeed = new DeterministicSeed(specificSenderSeed, specificSenderPassphrase, 0, DeterministicSeed.Type.BIP39);
+        Wallet senderWallet = new Wallet();
+        senderWallet.setPolicyType(PolicyType.SINGLE);
+        senderWallet.setScriptType(scriptType);
+        Keystore senderKeystore = Keystore.fromSeed(senderSeed, scriptType.getDefaultDerivation(senderAccount));
+        senderWallet.getKeystores().add(senderKeystore);
+        senderWallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, scriptType, senderWallet.getKeystores(), 1));
+
+        // Load receiver seed from environment variable
+        String receiverSeedEnvVar = System.getenv("BIP47_TEST_RECEIVER_SEED");
+        if (receiverSeedEnvVar == null || receiverSeedEnvVar.trim().isEmpty()) {
+            throw new IllegalStateException("Environment variable BIP47_TEST_RECEIVER_SEED must be set. Format: comma-separated seed words");
+        }
+        List<String> specificReceiverSeed = List.of(receiverSeedEnvVar.trim().split(","));
+        if (specificReceiverSeed.size() != 12 && specificReceiverSeed.size() != 24) {
+            throw new IllegalArgumentException("BIP47_TEST_RECEIVER_SEED must be exactly 12 or 24 words (comma-separated). Got: " + specificReceiverSeed.size());
+        }
+
+        // Create receiver wallet with env-provided seed and custom passphrase at parameterized account index
+        DeterministicSeed receiverSeed = new DeterministicSeed(specificReceiverSeed, customReceiverPassphrase, 0, DeterministicSeed.Type.BIP39);
+        Wallet receiverWallet = new Wallet();
+        receiverWallet.setPolicyType(PolicyType.SINGLE);
+        receiverWallet.setScriptType(scriptType);
+        Keystore receiverKeystore = Keystore.fromSeed(receiverSeed, scriptType.getDefaultDerivation(receiverAccount));
+        receiverWallet.getKeystores().add(receiverKeystore);
+        receiverWallet.setDefaultPolicy(Policy.getPolicy(PolicyType.SINGLE, scriptType, receiverWallet.getKeystores(), 1));
+        
+        // Action
+        // Get payment codes
+        PaymentCode senderPaymentCode = senderWallet.getPaymentCode();
+        PaymentCode receiverPaymentCode = receiverWallet.getPaymentCode();
+        
+        // Verify payment codes are valid
+        Assertions.assertNotNull(senderPaymentCode, "Sender payment code should not be null");
+        Assertions.assertNotNull(receiverPaymentCode, "Receiver payment code should not be null");
+        
+        // Create dummy outpoint for notification transaction
+        TransactionOutPoint inputOutpoint = new TransactionOutPoint(Sha256Hash.wrapReversed(DUMMY_TX_HASH), 0);
+        WalletNode senderInputNode = senderWallet.getNode(KeyPurpose.RECEIVE).getChildren().iterator().next();
+        ECKey senderInputKey = senderKeystore.getKey(senderInputNode);
+        
+        // Compute and print the blinded payment code
+        byte[] blindedPaymentCode = computeBlindedPaymentCode(senderInputKey, senderPaymentCode, receiverPaymentCode, inputOutpoint);
+        System.out.println("Blinded payment code (hex): " + Utils.bytesToHex(blindedPaymentCode));
+        
+        // Print the notification address
+        System.out.println("Notification address: " + receiverPaymentCode.getNotificationAddress());
+        
+        // Create notification transaction
+        Transaction notificationTx = createNotificationTransaction(
+                senderWallet, senderKeystore, senderPaymentCode, receiverPaymentCode, scriptType);
+        
+        // Receiver processes notification transaction
+        Wallet receiverNotificationWallet = receiverWallet.getNotificationWallet();
+        PaymentCode recoveredPaymentCode = PaymentCode.getPaymentCode(
+                notificationTx,
+                receiverNotificationWallet.getKeystores().get(0));
+        
+        // Create BIP47 payment child wallets
+        WalletPair childWallets = createChildWallets(
+                senderWallet, receiverWallet, recoveredPaymentCode, receiverPaymentCode,
+                scriptType, "Sender", "Receiver");
+        
+        // Print the first 6 payment addresses the sender will send to
+        WalletNode[] senderPaymentNodes = new WalletNode[6];
+        senderPaymentNodes[0] = childWallets.senderChildWallet.getFreshNode(KeyPurpose.SEND);
+        System.out.println("Post-notification payment address [index 0] (sender will send to): " + senderPaymentNodes[0].getAddress());
+        
+        for(int i = 1; i < 6; i++) {
+            senderPaymentNodes[i] = childWallets.senderChildWallet.getFreshNode(KeyPurpose.SEND, senderPaymentNodes[i-1]);
+            System.out.println("Post-notification payment address [index " + i + "] (sender will send to): " + senderPaymentNodes[i].getAddress());
+        }
+        
+        // Verification
+        // Verify the recovered payment code matches the sender's
+        Assertions.assertEquals(senderPaymentCode, recoveredPaymentCode, 
+                "Recovered payment code should match sender's payment code");
+        
+        // Verify address derivation
+        WalletNode[] nodes = verifyAddressDerivation(
+                childWallets.senderChildWallet, childWallets.receiverChildWallet,
+                3, "Addresses with specific seed and passphrase");
+        
+        // Verify key access for receiver
+        verifyKeyAccess(receiverKeystore, nodes[1], 3, "Public key mismatch with specific seed and passphrase");
+    }
 } 
